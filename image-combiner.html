@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Combiner HD</title>
+    <style>
+        :root {
+            --gap: 10px;
+            --box-size: 200px;
+        }
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0;
+        }
+        .container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            position: relative;
+            max-width: 90vw;
+        }
+        .image-container {
+            display: grid;
+            grid-gap: var(--gap);
+            grid-template-columns: repeat(auto-fit, var(--box-size));
+            justify-content: center;
+            min-height: calc(var(--box-size) + 4px);
+            padding: 10px;
+        }
+        .image-box {
+            width: var(--box-size);
+            height: var(--box-size);
+            border: 2px dashed #ccc;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            cursor: move;
+            position: relative;
+            background: white;
+            overflow: hidden;
+        }
+        .image-box.dragging {
+            opacity: 0.5;
+        }
+        .image-box img {
+            max-width: 100%;
+            max-height: 100%;
+            width: auto;
+            height: auto;
+            object-fit: contain;
+        }
+        .preview-container {
+            margin-top: 20px;
+            text-align: center;
+        }
+        #previewCanvas {
+            max-width: 100%;
+            height: auto;
+            border: 1px solid #ccc;
+        }
+        .controls {
+            margin-top: 20px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: center;
+        }
+        input[type="file"] {
+            display: none;
+        }
+        label, button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        #downloadBtn {
+            background-color: #2196F3;
+        }
+        label:hover, button:hover {
+            opacity: 0.9;
+        }
+        #closeBtn {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background-color: #f44336;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        .remove-image {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            background-color: #f44336;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            font-size: 12px;
+            cursor: pointer;
+            display: none;
+            z-index: 2;
+        }
+        .image-box:hover .remove-image {
+            display: block;
+        }
+        .placeholder {
+            border: 2px dashed #666;
+            background-color: #f8f8f8;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <button id="closeBtn">&times;</button>
+        <div class="image-container" id="imageContainer"></div>
+        <div class="preview-container">
+            <canvas id="previewCanvas"></canvas>
+        </div>
+        <div class="controls">
+            <button id="addImageBtn">Add Image</button>
+            <label for="gapInput">Gap:</label>
+            <input type="number" id="gapInput" value="10" min="0" max="100">
+            <button id="toggleOrientation">Toggle Orientation</button>
+            <button id="downloadBtn">Download HD</button>
+        </div>
+    </div>
+
+    <script>
+        const imageContainer = document.getElementById('imageContainer');
+        const addImageBtn = document.getElementById('addImageBtn');
+        const gapInput = document.getElementById('gapInput');
+        const toggleOrientationBtn = document.getElementById('toggleOrientation');
+        const closeBtn = document.getElementById('closeBtn');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const previewCanvas = document.getElementById('previewCanvas');
+        const ctx = previewCanvas.getContext('2d');
+
+        let isHorizontal = true;
+        let imageCount = 0;
+        let draggedElement = null;
+
+        function createImageBox() {
+            const imageBox = document.createElement('div');
+            imageBox.className = 'image-box';
+            imageBox.draggable = true;
+            imageBox.id = `box${++imageCount}`;
+
+            const img = document.createElement('img');
+            img.id = `img${imageCount}`;
+            img.alt = `Image ${imageCount}`;
+            img.onload = updatePreview;
+
+            const fileInput = document.createElement('input');
+            fileInput.type = 'file';
+            fileInput.id = `file${imageCount}`;
+            fileInput.accept = 'image/*';
+            fileInput.style.display = 'none';
+
+            const uploadLabel = document.createElement('label');
+            uploadLabel.htmlFor = `file${imageCount}`;
+            uploadLabel.textContent = 'Upload Image';
+
+            const removeBtn = document.createElement('button');
+            removeBtn.className = 'remove-image';
+            removeBtn.textContent = '×';
+            removeBtn.onclick = (e) => {
+                e.stopPropagation();
+                removeImage(imageBox);
+            };
+
+            imageBox.appendChild(img);
+            imageBox.appendChild(fileInput);
+            imageBox.appendChild(uploadLabel);
+            imageBox.appendChild(removeBtn);
+
+            fileInput.addEventListener('change', (e) => handleFileSelect(e, img));
+            setupDragAndDrop(imageBox);
+
+            return imageBox;
+        }
+
+        function setupDragAndDrop(element) {
+            element.addEventListener('dragstart', handleDragStart);
+            element.addEventListener('dragend', handleDragEnd);
+            element.addEventListener('dragover', handleDragOver);
+            element.addEventListener('drop', handleDrop);
+            element.addEventListener('dragenter', handleDragEnter);
+            element.addEventListener('dragleave', handleDragLeave);
+        }
+
+        function handleFileSelect(event, imgElement) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    imgElement.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        function removeImage(imageBox) {
+            imageContainer.removeChild(imageBox);
+            updatePreview();
+        }
+
+        function updatePreview() {
+            const images = Array.from(imageContainer.getElementsByTagName('img'))
+                .filter(img => img.src);
+
+            if (images.length === 0) {
+                previewCanvas.width = 0;
+                previewCanvas.height = 0;
+                return;
+            }
+
+            const gap = parseInt(gapInput.value);
+            let totalWidth = 0;
+            let totalHeight = 0;
+            const maxWidth = 2000; // Maximum width for preview
+            const imageDetails = [];
+
+            // Calculate dimensions
+            images.forEach(img => {
+                const aspectRatio = img.naturalWidth / img.naturalHeight;
+                let width, height;
+
+                if (isHorizontal) {
+                    height = 200; // Fixed height for horizontal layout
+                    width = height * aspectRatio;
+                } else {
+                    width = 200; // Fixed width for vertical layout
+                    height = width / aspectRatio;
+                }
+
+                imageDetails.push({ width, height });
+
+                if (isHorizontal) {
+                    totalWidth += width;
+                    totalHeight = Math.max(totalHeight, height);
+                } else {
+                    totalWidth = Math.max(totalWidth, width);
+                    totalHeight += height;
+                }
+            });
+
+            // Add gaps
+            if (isHorizontal) {
+                totalWidth += gap * (images.length - 1);
+            } else {
+                totalHeight += gap * (images.length - 1);
+            }
+
+            // Scale for preview
+            const scale = Math.min(1, maxWidth / totalWidth);
+            previewCanvas.width = totalWidth * scale;
+            previewCanvas.height = totalHeight * scale;
+
+            // Clear canvas
+            ctx.fillStyle = 'white';
+            ctx.fillRect(0, 0, previewCanvas.width, previewCanvas.height);
+
+            // Draw images
+            let x = 0;
+            let y = 0;
+
+            images.forEach((img, i) => {
+                const width = imageDetails[i].width * scale;
+                const height = imageDetails[i].height * scale;
+
+                ctx.drawImage(img, x, y, width, height);
+
+                if (isHorizontal) {
+                    x += width + (gap * scale);
+                } else {
+                    y += height + (gap * scale);
+                }
+            });
+        }
+
+        function generateHDImage() {
+            const images = Array.from(imageContainer.getElementsByTagName('img'))
+                .filter(img => img.src);
+
+            if (images.length === 0) return;
+
+            const gap = parseInt(gapInput.value);
+            let totalWidth = 0;
+            let totalHeight = 0;
+            const imageDetails = [];
+
+            // Calculate HD dimensions
+            images.forEach(img => {
+                const aspectRatio = img.naturalWidth / img.naturalHeight;
+                let width, height;
+
+                if (isHorizontal) {
+                    height = 1080; // HD height
+                    width = height * aspectRatio;
+                } else {
+                    width = 1080; // HD width
+                    height = width / aspectRatio;
+                }
+
+                imageDetails.push({ width, height });
+
+                if (isHorizontal) {
+                    totalWidth += width;
+                    totalHeight = Math.max(totalHeight, height);
+                } else {
+                    totalWidth = Math.max(totalWidth, width);
+                    totalHeight += height;
+                }
+            });
+
+            // Add gaps
+            if (isHorizontal) {
+                totalWidth += gap * (images.length - 1);
+            } else {
+                totalHeight += gap * (images.length - 1);
+            }
+
+            // Create HD canvas
+            const hdCanvas = document.createElement('canvas');
+            hdCanvas.width = totalWidth;
+            hdCanvas.height = totalHeight;
+            const hdCtx = hdCanvas.getContext('2d');
+
+            // Fill white background
+            hdCtx.fillStyle = 'white';
+            hdCtx.fillRect(0, 0, hdCanvas.width, hdCanvas.height);
+
+            // Draw images in HD
+            let x = 0;
+            let y = 0;
+
+            images.forEach((img, i) => {
+                const width = imageDetails[i].width;
+                const height = imageDetails[i].height;
+
+                hdCtx.drawImage(img, x, y, width, height);
+
+                if (isHorizontal) {
+                    x += width + gap;
+                } else {
+                    y += height + gap;
+                }
+            });
+
+            // Download
+            const link = document.createElement('a');
+            link.download = 'combined-image-hd.png';
+            link.href = hdCanvas.toDataURL('image/png');
+            link.click();
+        }
+
+        function handleDragStart(e) {
+            draggedElement = this;
+            this.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', '');
+        }
+
+        function handleDragEnd(e) {
+            this.classList.remove('dragging');
+            draggedElement = null;
+            document.querySelectorAll('.image-box').forEach(box => {
+                box.classList.remove('placeholder');
+            });
+            updatePreview();
+        }
+
+        function handleDragOver(e) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+        }
+
+        function handleDragEnter(e) {
+            e.preventDefault();
+            if (this !== draggedElement) {
+                this.classList.add('placeholder');
+            }
+        }
+
+        function handleDragLeave(e) {
+            this.classList.remove('placeholder');
+        }
+
+        function handleDrop(e) {
+            e.preventDefault();
+            this.classList.remove('placeholder');
+            
+            if (draggedElement && this !== draggedElement) {
+                const allBoxes = [...imageContainer.getElementsByClassName('image-box')];
+                const draggedPos = allBoxes.indexOf(draggedElement);
+                const droppedPos = allBoxes.indexOf(this);
+
+                if (draggedPos < droppedPos) {
+                    this.parentNode.insertBefore(draggedElement, this.nextSibling);
+                } else {
+                    this.parentNode.insertBefore(draggedElement, this);
+                }
+                updatePreview();
+            }
+        }
+
+        addImageBtn.addEventListener('click', () => {
+            imageContainer.appendChild(createImageBox());
+        });
+
+        gapInput.addEventListener('input', () => {
+            document.documentElement.style.setProperty('--gap', `${gapInput.value}px`);
+            updatePreview();
+        });
+
+        toggleOrientationBtn.addEventListener('click', () => {
+            isHorizontal = !isHorizontal;
+            imageContainer.style.gridAutoFlow = isHorizontal ? 'row' : 'column';
+            updatePreview();
+        });
+
+        closeBtn.addEventListener('click', () => {
+            if (confirm('Are you sure you want to close the application?')) {
+                window.close();
+            }
+        });
+
+        downloadBtn.addEventListener('click', generateHDImage);
+
+        // Initialize with two image boxes
+        imageContainer.appendChild(createImageBox());
+        imageContainer.appendChild(createImageBox());
+    </script>
+</body>
+</html>
